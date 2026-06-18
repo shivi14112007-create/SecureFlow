@@ -1,5 +1,5 @@
 
-import { ScanFinding } from './claw';
+import { ScanFinding } from './scanner';
 
 export type PolicyResult = 'PASS' | 'REVIEW REQUIRED' | 'BLOCKED';
 

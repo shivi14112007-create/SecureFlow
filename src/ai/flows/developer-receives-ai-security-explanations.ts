@@ -9,6 +9,7 @@
 
 import { z } from 'zod';
 import Groq from 'groq-sdk';
+import "dotenv/config";
 
 const AISecurityExplanationInputSchema = z.object({
   findingType: z

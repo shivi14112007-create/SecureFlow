@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { claw } from '@/lib/armor/claw';
+import { scanner } from '@/lib/armor/scanner';
 import { iq } from '@/lib/armor/iq';
 import { developerReceivesAISecurityExplanations } from '@/ai/flows/developer-receives-ai-security-explanations';
 import { App } from 'octokit';
@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
 
       await Promise.all(repoPromises);
       console.log(`Successfully installed app and populated ${repositories.length} repositories.`);
-      console.log(process.env.GROQ_API_KEY)
+      console.log(process.env.GROQ_API_KEY);
       // --- EVENT 1: Repository Added (Installation) ---
       await prisma.auditLog.create({
         data: {
@@ -140,10 +140,15 @@ export async function POST(req: NextRequest) {
         pull_number: pull_request.number,
       });
 
-      const fileNames = pullRequestFiles.map((file: any) => file.filename);
+      const fileChanges = pullRequestFiles
+        .filter((file: any) => file.patch) // Ensure there is a code change
+        .map((file: any) => ({
+          filename: file.filename,
+          patch: file.patch
+        }));
 
       // Security Scanning
-      const findings = await claw.scanPullRequest(fileNames);
+      const findings = await scanner.scanPullRequest(fileChanges);
       const enrichedFindings = await Promise.all(findings.map(async (finding: any) => {
         const aiResponse = await developerReceivesAISecurityExplanations({
           findingType: finding.type,
