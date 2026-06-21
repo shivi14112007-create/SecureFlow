@@ -282,4 +282,5 @@ CRITICAL RULES:
 //   console.log(process.env.GROQ_API_KEY);
 // }
 
+console.log("Hello");
 export const scanner = new ArmorIQScanner();
