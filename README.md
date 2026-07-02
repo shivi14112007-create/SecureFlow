@@ -36,10 +36,6 @@
   - [4. Database Setup](#4-database-setup)
   - [5. Run the App](#5-run-the-app)
 - [Docker Setup](#-docker-setup)
-- [Environment Variables Reference](#-environment-variables-reference)
-- [Available Scripts](#-available-scripts)
-- [Security Policies](#-security-policies)
-- [Contributing](#-contributing)
 
 - [🔑 Environment Variables Reference](#-environment-variables-reference)
 - [📝 Available Scripts](#-available-scripts)
