@@ -1,4 +1,3 @@
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -15,13 +14,13 @@ model User {
   image         String?
   accounts      Account[]
   sessions      Session[]
-  
+
   // Updated relation field
   repositories  Repository[]
   policyToggles UserPolicyToggle[] // Replaced 'policies Policy[]'
-  
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Account {
@@ -36,12 +35,12 @@ model Account {
   scope             String?
   id_token          String?
   session_state     String?
- 
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
- 
+
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
- 
+
   @@id([provider, providerAccountId])
 }
 
@@ -50,7 +49,7 @@ model Session {
   userId       String
   expires      DateTime
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
- 
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -59,82 +58,82 @@ model VerificationToken {
   identifier String
   token      String
   expires    DateTime
- 
+
   @@id([identifier, token])
 }
 
 model Repository {
-  id           String        @id @default(cuid())
-  githubId     BigInt        @unique  // Changed from Int
-  fullName     String
-  owner        String
-  isActive     Boolean       @default(true)
-  
+  id       String  @id @default(cuid())
+  githubId BigInt  @unique // Changed from Int
+  fullName String
+  owner    String
+  isActive Boolean @default(true)
+
   // Link to the User
-  userId       String
-  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   pullRequests PullRequest[]
   createdAt    DateTime      @default(now())
 }
 
 model PolicyTemplate {
-  id          String   @id @default(cuid())
+  id          String  @id @default(cuid())
   name        String
   description String
-  severity    String   @default("HIGH")
-  action      String   @default("REVIEW REQUIRED")
-  rules       Json     // Stores the conditions/glob patterns
-  isDefault   Boolean  @default(false) // Whether it is toggled ON by default for new users
+  severity    String  @default("HIGH")
+  action      String  @default("REVIEW REQUIRED")
+  rules       Json // Stores the conditions/glob patterns
+  isDefault   Boolean @default(false) // Whether it is toggled ON by default for new users
 
   activeToggles UserPolicyToggle[]
-  createdAt   DateTime @default(now())
+  createdAt     DateTime           @default(now())
 }
 
 model UserPolicyToggle {
-  id               String         @id @default(cuid())
+  id               String  @id @default(cuid())
   userId           String
   policyTemplateId String
-  isActive         Boolean        @default(true)
-  
-  user             User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  template         PolicyTemplate @relation(fields: [policyTemplateId], references: [id], onDelete: Cascade)
-  
+  isActive         Boolean @default(true)
+
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  template  PolicyTemplate @relation(fields: [policyTemplateId], references: [id], onDelete: Cascade)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
   // Ensure a user can only have one toggle record per template
   @@unique([userId, policyTemplateId])
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
 }
 
 model PullRequest {
-  id           String        @id @default(cuid())
-  githubId     BigInt        @unique  // Changed from Int
-  prNumber     Int                    // Int is fine here since PR numbers are sequential per repo
+  id           String       @id @default(cuid())
+  githubId     BigInt       @unique // Changed from Int
+  prNumber     Int // Int is fine here since PR numbers are sequential per repo
   title        String
-  state        String        // open, closed, merged
-  status       String        // PASS, REVIEW_REQUIRED, BLOCKED
+  state        String // open, closed, merged
+  status       String // PASS, REVIEW_REQUIRED, BLOCKED
   repositoryId String
-  repository   Repository    @relation(fields: [repositoryId], references: [id])
+  repository   Repository   @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
   scans        ScanResult[]
-  createdAt    DateTime      @default(now())
+  createdAt    DateTime     @default(now())
 }
 
 model ScanResult {
-  id            String      @id @default(cuid())
-  pullRequestId String
-  pullRequest   PullRequest @relation(fields: [pullRequestId], references: [id])
-  findings      Finding[]
-  riskScore     Int
-  policyDecision String     // PASS, REVIEW, BLOCK
-  createdAt     DateTime    @default(now())
+  id             String      @id @default(cuid())
+  pullRequestId  String
+  pullRequest    PullRequest @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
+  findings       Finding[]
+  riskScore      Int
+  policyDecision String // PASS, REVIEW, BLOCK
+  createdAt      DateTime    @default(now())
 }
 
 model Finding {
   id           String     @id @default(cuid())
   scanResultId String
-  scanResult   ScanResult @relation(fields: [scanResultId], references: [id])
-  type         String     // Secret, Vulnerability, Misconfig
-  severity     String     // CRITICAL, HIGH, MEDIUM, LOW
+  scanResult   ScanResult @relation(fields: [scanResultId], references: [id], onDelete: Cascade)
+  type         String // Secret, Vulnerability, Misconfig
+  severity     String // CRITICAL, HIGH, MEDIUM, LOW
   fileLocation String
   codeSnippet  String?
   explanation  String?
