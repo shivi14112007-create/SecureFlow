@@ -42,10 +42,10 @@
 - [🤝 Contributing](#-contributing)
 - [❓ FAQ](#-faq)
 - [📄 License](#-license)
-</details>details>
+</details>
 ---
 
-## 🌟 Features
+SecureFlow integrates directly with GitHub via a GitHub App and webhooks. Every time a Pull Request is opened or updated, it extracts the code diff, runs it through Groq's LLM (Llama 3.1), and generates actionable security findings with AI-written explanations and remediation steps — all visible on a centralized dashboard.
 
 ### 🤖 AI-Powered Detection
 Uses Groq's Llama 3.1 to detect hardcoded secrets, vulnerabilities, and misconfigurations in your code.

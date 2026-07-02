@@ -51,7 +51,7 @@ export default function FindingsClient({ findings, stats }: FindingsClientProps)
                           <Cpu className="w-3 h-3" /> AI Security Explanation
                         </h4>
                         <p className="text-sm leading-relaxed text-foreground/90 italic">
-                          "{finding.explanation || 'No explanation provided.'}"
+                          &quot;{finding.explanation || 'No explanation provided.'}&quot;
                         </p>
                       </div>
                       

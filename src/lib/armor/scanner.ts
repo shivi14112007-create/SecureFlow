@@ -113,10 +113,21 @@ function filterFalsePositives(findings: ScanFinding[]): ScanFinding[] {
 
 export class ArmorIQScanner {
   async scanPullRequest(files: FileChange[], activePolicies: any[] = []): Promise<ScanFinding[]> {
-    let combinedContent = '';
-    const scannedFilesList: string[] = [];
-    
+    let currentBatch = '';
+    let currentBatchFiles: string[] = [];
+    const allFindings: ScanFinding[] = [];
     const MAX_COMBINED_LENGTH = 8000; 
+
+    let policyInstructions = `CORE RULES:\n1. Hardcoded secrets (actual active production string values).\n2. Contextual leaks (explicitly logging secret variables to the console or exposing them to clients).`;
+
+    if (activePolicies && activePolicies.length > 0) {
+      policyInstructions += `\n\nCUSTOM POLICIES TO ENFORCE:\n`;
+      activePolicies.forEach((policy, index) => {
+        policyInstructions += `- Rule ${index + 1}: ${policy.description}\n`;
+      });
+    } else {
+      policyInstructions += `\n\nCRITICAL: DO NOT focus on or flag general vulnerabilities like SQL injection, XSS, or logic flaws. ONLY FOCUS ON THE DEFAULT SECRET-RELATED ISSUES ABOVE.`;
+    }
 
     for (const file of files) {
       if (shouldIgnore(file.filename)) {
@@ -124,9 +135,13 @@ export class ArmorIQScanner {
         continue;
       }
 
-      const addedLines = extractAddedLines(file.patch || '');
+      if (!file.patch || file.patch.trim() === '') {
+        continue;
+      }
+
+      const addedLines = extractAddedLines(file.patch);
       
-      if (!addedLines.trim()) {
+      if (!addedLines || addedLines.trim().length === 0) {
         continue;
       }
 
@@ -139,35 +154,35 @@ export class ArmorIQScanner {
         fileContext = "THIS IS A DATABASE SEED SCRIPT. It contains string descriptions of security policies. DO NOT flag the text inside 'name', 'description', or 'conditions' strings as vulnerabilities.";
       } else if (lowerFile.includes('schema.prisma')) {
         fileContext = "THIS IS A DATABASE SCHEMA. It does not execute logic. Do not flag data types (like Int) or relation queries as logic flaws.";
+      } else if (lowerFile.endsWith('.sol') || lowerFile.endsWith('.leo') || lowerFile.endsWith('.rs')) {
+        fileContext = "THIS IS A SMART CONTRACT OR PRIVACY-PRESERVING ZERO-KNOWLEDGE CIRCUIT. Analyze it with decentralized architecture patterns in mind and reduce false positives for decentralized logic.";
       }
 
-      scannedFilesList.push(file.filename);
-      
-      // UPDATE: Use XML tags instead of dashed headers for better 8B model attention
-      combinedContent += `<file name="${file.filename}" context_warning="${fileContext}">\n${addedLines}\n</file>\n\n`;
+      const fileContentChunk = `<file name="${file.filename}" context_warning="${fileContext}">\n${addedLines}\n</file>\n\n`;
+
+      if (currentBatch.length + fileContentChunk.length > MAX_COMBINED_LENGTH && currentBatch.length > 0) {
+        const batchFindings = await processBatch(currentBatch, currentBatchFiles);
+        allFindings.push(...batchFindings);
+        
+        currentBatch = '';
+        currentBatchFiles = [];
+      }
+
+      currentBatch += fileContentChunk;
+      currentBatchFiles.push(file.filename);
     }
 
-    if (!combinedContent.trim()) {
-      return [];
+    if (currentBatch.length > 0) {
+      const batchFindings = await processBatch(currentBatch, currentBatchFiles);
+      allFindings.push(...batchFindings);
     }
 
-    if (combinedContent.length > MAX_COMBINED_LENGTH) {
-      combinedContent = combinedContent.substring(0, MAX_COMBINED_LENGTH) + "\n\n...[TRUNCATED FOR SIZE]...";
-    }
+    return allFindings;
 
-    let policyInstructions = `CORE RULES:\n1. Hardcoded secrets (actual active production string values).\n2. Contextual leaks (explicitly logging secret variables to the console or exposing them to clients).`;
+    async function processBatch(batchContent: string, batchFiles: string[]): Promise<ScanFinding[]> {
+      if (!batchContent.trim()) return [];
 
-    if (activePolicies && activePolicies.length > 0) {
-      policyInstructions += `\n\nCUSTOM POLICIES TO ENFORCE:\n`;
-      activePolicies.forEach((policy, index) => {
-        // Only provide the description, don't confuse it with internal policy names or JSON structure
-        policyInstructions += `- Rule ${index + 1}: ${policy.description}\n`;
-      });
-    } else {
-      policyInstructions += `\n\nCRITICAL: DO NOT focus on or flag general vulnerabilities like SQL injection, XSS, or logic flaws. ONLY FOCUS ON THE DEFAULT SECRET-RELATED ISSUES ABOVE.`;
-    }
-
-    const prompt = `Analyze the following aggregated code changes from a Pull Request for security vulnerabilities.
+      const prompt = `Analyze the following aggregated code changes from a Pull Request for security vulnerabilities.
 Look strictly for the following configured issues:
 
 ${policyInstructions}
@@ -178,7 +193,7 @@ CRITICAL RULES SCOPED BY FILE TYPE:
 - For '.ts' or '.js' files: You MUST flag any instance of 'console.log(process.env...)' as a CRITICAL contextual leak or any 'console.log(<variable>)' where the 'variable' is instantiated with 'process.env...'.
 
 Aggregated Code Changes:
-${combinedContent}
+${batchContent}
 
 Respond strictly with a valid JSON object containing a "findings" property. 
 Format:
@@ -195,20 +210,19 @@ Format:
   ]
 }`;
 
-    let findings: ScanFinding[] = [];
-    let success = false;
-    let retries = 3;
+      let findings: ScanFinding[] = [];
+      let success = false;
+      let retries = 3;
 
-    // 3. Fire a single batch request
-    while (!success && retries > 0) {
-      try {
-        console.log(`🔍 Triggering consolidated security scan for files: [${scannedFilesList.join(', ')}]...`);
-        
-        const chatCompletion = await groq.chat.completions.create({
-          messages: [
-            {
-              role: 'system',
-              content: `You are an elite application security auditor. Output raw JSON only.
+      while (!success && retries > 0) {
+        try {
+          console.log(`🔍 Triggering consolidated security scan for files: [${batchFiles.join(', ')}]...`);
+          
+          const chatCompletion = await groq.chat.completions.create({
+            messages: [
+              {
+                role: 'system',
+                content: `You are an elite application security auditor. Output raw JSON only.
 
 CRITICAL RULES:
 1. ONLY flag actual, executable vulnerabilities.
@@ -216,64 +230,63 @@ CRITICAL RULES:
 3. SELF-REFERENTIAL TRAP: You are scanning a security tool. Do NOT flag string literals or text descriptions of security policies (e.g., text inside seed files) as vulnerabilities.
 4. JSON ESCAPING (CRITICAL): You MUST properly escape ALL double quotes (\\") and newlines (\\n) inside the "codeSnippet" and "description" fields. NEVER use unescaped double quotes, and NEVER try to use JavaScript string concatenation (+) inside the JSON structure.
 5. You MUST return a root JSON object with a "findings" key array. The "reasoning" key must come first in each object.` 
-            },
-            { role: 'user', content: prompt }
-          ],
-          model: 'llama-3.1-8b-instant',
-          response_format: { type: 'json_object' },
-        });
+              },
+              { role: 'user', content: prompt }
+            ],
+            model: 'llama-3.1-8b-instant',
+            response_format: { type: 'json_object' },
+          });
 
-        const responseText = chatCompletion.choices[0]?.message?.content || '{"findings": []}';
-        const result = JSON.parse(responseText);
-        
-        // Extract raw array safely from the root object's property
-        const rawFindings = result.findings || [];
-        
-        // Defensive Layer: Clean and sanitize findings to guarantee absolute runtime type compliance
-        const sanitizedFindings: ScanFinding[] = rawFindings.map((f: any) => {
-          let normalizedSnippet = '';
+          const responseText = chatCompletion.choices[0]?.message?.content || '{"findings": []}';
+          const result = JSON.parse(responseText);
           
-          if (typeof f.codeSnippet === 'string') {
-            normalizedSnippet = f.codeSnippet;
-          } else if (f.codeSnippet !== null && f.codeSnippet !== undefined) {
-            normalizedSnippet = typeof f.codeSnippet === 'object'
-              ? JSON.stringify(f.codeSnippet, null, 2)
-              : String(f.codeSnippet);
+          const rawFindings = result.findings || [];
+          
+          const sanitizedFindings: ScanFinding[] = rawFindings.map((f: any) => {
+            let normalizedSnippet = '';
+            
+            if (typeof f.codeSnippet === 'string') {
+              normalizedSnippet = f.codeSnippet;
+            } else if (f.codeSnippet !== null && f.codeSnippet !== undefined) {
+              normalizedSnippet = typeof f.codeSnippet === 'object'
+                ? JSON.stringify(f.codeSnippet, null, 2)
+                : String(f.codeSnippet);
+            }
+
+            const upperSeverity = String(f.severity || 'MEDIUM').toUpperCase();
+            const validSeverities = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'NONE'];
+
+            return {
+              type: String(f.type || 'Vulnerability'),
+              severity: validSeverities.includes(upperSeverity) ? (upperSeverity as any) : 'MEDIUM',
+              description: String(f.description || 'No description provided.'),
+              fileLocation: String(f.fileLocation || 'Unknown file path'),
+              codeSnippet: normalizedSnippet
+            };
+          });
+
+          findings = filterFalsePositives(sanitizedFindings);
+          success = true;
+        } catch (error: any) {
+          if (error.status === 429) {
+            const retryAfterHeader = error.headers?.get?.('retry-after') || error.headers?.['retry-after'];
+            const waitTime = retryAfterHeader ? parseInt(retryAfterHeader, 10) * 1000 : (4 - retries) * 25000;
+            
+            console.warn(`⏳ Rate limit reached. Waiting ${waitTime / 1000} seconds...`);
+            await delay(waitTime);
+            retries--;
+          } else if (error.status === 400 && error.error?.code === 'json_validate_failed') {
+            console.warn(`⚠️ LLM generated invalid JSON. Retrying... (${retries} attempts left)`);
+            retries--;
+          } else {
+            console.error(`❌ Consolidated scan failed completely:`, error);
+            break;
           }
-
-          const upperSeverity = String(f.severity || 'MEDIUM').toUpperCase();
-          const validSeverities = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'NONE'];
-
-          return {
-            type: String(f.type || 'Vulnerability'),
-            severity: validSeverities.includes(upperSeverity) ? (upperSeverity as any) : 'MEDIUM',
-            description: String(f.description || 'No description provided.'),
-            fileLocation: String(f.fileLocation || 'Unknown file path'),
-            codeSnippet: normalizedSnippet
-          };
-        });
-
-        findings = filterFalsePositives(sanitizedFindings);
-        success = true;
-      } catch (error: any) {
-        if (error.status === 429) {
-          const retryAfterHeader = error.headers?.get?.('retry-after') || error.headers?.['retry-after'];
-          const waitTime = retryAfterHeader ? parseInt(retryAfterHeader, 10) * 1000 : (4 - retries) * 25000;
-          
-          console.warn(`⏳ Rate limit reached. Waiting ${waitTime / 1000} seconds...`);
-          await delay(waitTime);
-          retries--;
-        } else if (error.status === 400 && error.error?.code === 'json_validate_failed') {
-          console.warn(`⚠️ LLM generated invalid JSON. Retrying... (${retries} attempts left)`);
-          retries--;
-        } else {
-          console.error(`❌ Consolidated scan failed completely:`, error);
-          break;
         }
       }
-    }
 
-    return findings;
+      return findings;
+    }
   }
 }
 
