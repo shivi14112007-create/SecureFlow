@@ -2,6 +2,11 @@ import { PrismaClient } from '@prisma/client';
 import { Pool } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
 
+// BigInt serialization fix: standard JSON.stringify() does not support BigInt values.
+// Patching BigInt.prototype.toJSON allows objects with BigInt fields (such as Repository/PullRequest githubId)
+// to be serialized safely in API responses.
+if (!(BigInt.prototype as any).toJSON) {
+  (BigInt.prototype as any).toJSON = function (this: bigint) {
 if (typeof (BigInt.prototype as any).toJSON === 'undefined') {
   (BigInt.prototype as any).toJSON = function () {
     return this.toString();
