@@ -42,6 +42,7 @@ model Account {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@id([provider, providerAccountId])
+  @@index([userId])
 }
 
 model Session {
@@ -52,6 +53,8 @@ model Session {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([userId])
 }
 
 model VerificationToken {
@@ -75,6 +78,8 @@ model Repository {
 
   pullRequests PullRequest[]
   createdAt    DateTime      @default(now())
+
+  @@index([userId])
 }
 
 model PolicyTemplate {
@@ -103,6 +108,8 @@ model UserPolicyToggle {
 
   // Ensure a user can only have one toggle record per template
   @@unique([userId, policyTemplateId])
+  @@index([userId])
+  @@index([policyTemplateId])
 }
 
 model PullRequest {
@@ -116,6 +123,8 @@ model PullRequest {
   repository   Repository   @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
   scans        ScanResult[]
   createdAt    DateTime     @default(now())
+
+  @@index([repositoryId])
 }
 
 model ScanResult {
@@ -126,6 +135,8 @@ model ScanResult {
   riskScore      Int
   policyDecision String // PASS, REVIEW, BLOCK
   createdAt      DateTime    @default(now())
+
+  @@index([pullRequestId])
 }
 
 model Finding {
@@ -139,6 +150,8 @@ model Finding {
   explanation  String?
   remediation  String?
   createdAt    DateTime   @default(now())
+
+  @@index([scanResultId])
 }
 
 model AuditLog {
@@ -149,4 +162,6 @@ model AuditLog {
   decision  String?
   metadata  Json?
   timestamp DateTime @default(now())
+
+  @@index([userId])
 }
