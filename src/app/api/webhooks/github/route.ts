@@ -301,18 +301,25 @@ export async function POST(req: NextRequest) {
         throw error;
       }
 
-      const fileChanges = pullRequestFiles
+      const MAX_FILES_PER_SCAN = 150;
+      let fileChanges = pullRequestFiles
         .filter((file: any) => file.patch && file.status !== 'removed') 
         .map((file: any) => ({
           filename: file.filename,
           patch: file.patch
         }));
 
+      let warningMessage = '';
+      if (fileChanges.length > MAX_FILES_PER_SCAN) {
+        fileChanges = fileChanges.slice(0, MAX_FILES_PER_SCAN);
+        warningMessage = `\n\n⚠️ **Warning:** This PR exceeds the maximum size limit. Only the first ${MAX_FILES_PER_SCAN} files were scanned to prevent timeout and rate-limit exhaustion.`;
+      }
+
       const pendingComment = await octokit.rest.issues.createComment({
         owner: repository.owner.login,
         repo: repository.name,
         issue_number: pull_request.number,
-        body: `### ⏳ SecureFlow AI Security Scan\n\nEvaluating **${fileChanges.length}** changed files. Please wait while the AI analyzes the code for potential vulnerabilities...`,
+        body: `### ⏳ SecureFlow AI Security Scan\n\nEvaluating **${fileChanges.length}** changed files. Please wait while the AI analyzes the code for potential vulnerabilities...${warningMessage}`,
       });
 
       // --- UPDATE: Pass the active policies to the scanner ---
@@ -364,6 +371,7 @@ export async function POST(req: NextRequest) {
 
      if (enrichedFindings.length > 0) {
         let commentBody = `### 🛡️ SecureFlow AI Security Report\n\n`;
+        if (warningMessage) commentBody += `${warningMessage}\n\n`;
         commentBody += `⚠️ Detected **${enrichedFindings.length}** potential issues matching your code policies. Please review them before merging.\n\n`;
 
         enrichedFindings.forEach((f: any) => {
@@ -403,7 +411,7 @@ export async function POST(req: NextRequest) {
           owner: repository.owner.login,
           repo: repository.name,
           comment_id: pendingComment.data.id,
-          body: `### 🛡️ SecureFlow AI Security Report\n\n✅ Scan completed successfully. No vulnerabilities found in the **${fileChanges.length}** analyzed files.`,
+          body: `### 🛡️ SecureFlow AI Security Report\n\n✅ Scan completed successfully. No vulnerabilities found in the **${fileChanges.length}** analyzed files.${warningMessage}`,
         });
       }
 
