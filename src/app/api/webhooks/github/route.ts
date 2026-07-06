@@ -340,10 +340,36 @@ export async function POST(req: NextRequest) {
         body: `### ⏳ SecureFlow AI Security Scan\n\nEvaluating **${fileChanges.length}** changed files. Please wait while the AI analyzes the code for potential vulnerabilities...${warningMessage}`,
       });
 
+      // Fetch custom ignore patterns from .secureflowignore if it exists in the root of the repository
+      let customIgnores: string[] = [];
+      try {
+        const { data: ignoreFile } = await octokit.rest.repos.getContent({
+          owner: repoOwner,
+          repo: repoName,
+          path: '.secureflowignore',
+          ref: pull_request?.head?.sha ?? '',
+        });
+
+        if (!Array.isArray(ignoreFile) && ignoreFile.type === 'file' && ignoreFile.content) {
+          const rawContent = Buffer.from(ignoreFile.content, 'base64').toString('utf8');
+          customIgnores = rawContent
+            .split(/\r?\n/)
+            .map(line => line.trim())
+            .filter(line => line.length > 0 && !line.startsWith('#'));
+          console.log(`ℹ️ Found .secureflowignore with ${customIgnores.length} custom ignore patterns.`);
+        }
+      } catch (error: any) {
+        if (error.status === 404) {
+          console.log('ℹ️ No .secureflowignore file found in repository root.');
+        } else {
+          console.warn('⚠️ Error fetching .secureflowignore:', error.message || error);
+        }
+      }
+
       // --- UPDATE: Pass the active policies to the scanner ---
       let findings: ScanFinding[];
       try {
-        findings = await scanner.scanPullRequest(fileChanges, activePolicies);
+        findings = await scanner.scanPullRequest(fileChanges, activePolicies, customIgnores);
       } catch (scanError: any) {
         console.error('❌ SecureFlow Scan Failed:', scanError);
         

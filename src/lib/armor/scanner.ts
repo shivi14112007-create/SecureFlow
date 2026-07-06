@@ -29,7 +29,46 @@ const IGNORED_PATHS = [
   'dist/', 'build/', '.next/', 'node_modules/', 'prisma/migrations/'
 ];
 
-function shouldIgnore(filename: string): boolean {
+function compileIgnorePatterns(patterns: string[]): RegExp[] {
+  return patterns
+    .map(p => p.trim())
+    .filter(p => p.length > 0 && !p.startsWith('#'))
+    .map(p => {
+      let pattern = p.replace(/\\/g, '/');
+      const hasLeadingSlash = pattern.startsWith('/');
+      const cleanPattern = hasLeadingSlash ? pattern.slice(1) : pattern;
+      const patternWithoutTrailingSlash = cleanPattern.endsWith('/') ? cleanPattern.slice(0, -1) : cleanPattern;
+      const isRootRelative = hasLeadingSlash || patternWithoutTrailingSlash.includes('/');
+      
+      let glob = cleanPattern;
+      if (glob.endsWith('/')) {
+        glob += '**';
+      }
+      
+      // Escape regex characters except *, ?
+      let regexStr = glob.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+      
+      // Handle question marks first (before introducing any group (?) syntax)
+      regexStr = regexStr.replace(/\?/g, '[^/]');
+      
+      // Handle double asterisks
+      regexStr = regexStr.replace(/\/\*\*\//g, '/(?:.*/)?');
+      regexStr = regexStr.replace(/\*\*\//g, '(?:.*/)?');
+      regexStr = regexStr.replace(/\/\*\**/g, '(?:/.*)?');
+      regexStr = regexStr.replace(/\*\*/g, '.*');
+      
+      // Handle single asterisks
+      regexStr = regexStr.replace(/(?<!\.)\*(?!\.)/g, '[^/]*');
+      
+      if (isRootRelative) {
+        return new RegExp(`^${regexStr}$`, 'i');
+      } else {
+        return new RegExp(`(^|/)${regexStr}$`, 'i');
+      }
+    });
+}
+
+function shouldIgnore(filename: string, customIgnores: RegExp[] = []): boolean {
   const lower = filename.toLowerCase();
   
   // 1. Path-level exclusions
@@ -45,6 +84,12 @@ function shouldIgnore(filename: string): boolean {
   // 3. Ignore configuration wrappers (Note: .env.example is intentionally NOT ignored here)
   const ignorePatterns = ['package.json', 'components.json', 'prisma.config.ts', '.gitignore'];
   if (ignorePatterns.some(pattern => lower.includes(pattern))) {
+    return true;
+  }
+
+  // 4. Custom ignores matching
+  const normalizedPath = filename.replace(/\\/g, '/');
+  if (customIgnores.some(regex => regex.test(normalizedPath))) {
     return true;
   }
 
@@ -112,11 +157,13 @@ function filterFalsePositives(findings: ScanFinding[]): ScanFinding[] {
 }
 
 export class ArmorIQScanner {
-  async scanPullRequest(files: FileChange[], activePolicies: any[] = []): Promise<ScanFinding[]> {
+  async scanPullRequest(files: FileChange[], activePolicies: any[] = [], customIgnores: string[] = []): Promise<ScanFinding[]> {
     let currentBatch = '';
     let currentBatchFiles: string[] = [];
     const allFindings: ScanFinding[] = [];
     const MAX_COMBINED_LENGTH = 8000; 
+
+    const compiledCustomIgnores = compileIgnorePatterns(customIgnores);
 
     let policyInstructions = `CORE RULES:\n1. Hardcoded secrets (actual active production string values).\n2. Contextual leaks (explicitly logging secret variables to the console or exposing them to clients).`;
 
@@ -130,7 +177,7 @@ export class ArmorIQScanner {
     }
 
     for (const file of files) {
-      if (shouldIgnore(file.filename)) {
+      if (shouldIgnore(file.filename, compiledCustomIgnores)) {
         console.log(`🛡️ Skipping ignored file: ${file.filename}`);
         continue;
       }
