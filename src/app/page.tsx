@@ -51,10 +51,10 @@ export default function LandingPage() {
             The Digital Heist <br /><span className="text-gradient">Defense System</span>
           </h1>
           <p className="text-base sm:text-lg text-muted-foreground max-w-2xl mx-auto mb-4 leading-relaxed px-2 font-medium">
-            In this heist... we're not stealing. We're protecting digital information.
+            In this heist... we&apos;re not stealing. We&apos;re protecting digital information.
           </p>
           <p className="text-sm text-muted-foreground max-w-2xl mx-auto mb-8 md:mb-10 leading-relaxed px-2">
-            Every heist needs a plan... We make sure hackers don't have one. "The Professor" orchestrates your CI/CD, scanning every PR for leaks before they breach The Vault.
+            Every heist needs a plan... We make sure hackers don&apos;t have one. &ldquo;The Professor&rdquo; orchestrates your CI/CD, scanning every PR for leaks before they breach The Vault.
           </p>
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-4 w-full sm:w-auto">
             <Link href="https://github.com/GauravKarakoti/SecureFlow/tree/main/docs" target="_blank" rel="noopener noreferrer">

@@ -34,7 +34,7 @@ function compileIgnorePatterns(patterns: string[]): RegExp[] {
     .map(p => p.trim())
     .filter(p => p.length > 0 && !p.startsWith('#'))
     .map(p => {
-      let pattern = p.replace(/\\/g, '/');
+      const pattern = p.replace(/\\/g, '/');
       const hasLeadingSlash = pattern.startsWith('/');
       const cleanPattern = hasLeadingSlash ? pattern.slice(1) : pattern;
       const patternWithoutTrailingSlash = cleanPattern.endsWith('/') ? cleanPattern.slice(0, -1) : cleanPattern;
