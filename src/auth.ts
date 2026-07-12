@@ -19,4 +19,27 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     },
   },
   ...authConfig,
+  callbacks: {
+    ...authConfig.callbacks,
+    async jwt(params: any) {
+      const { token, user, account } = params;
+      let finalUser = user;
+
+      if (account && user) {
+        const dbUser = await prisma.user.findUnique({
+          where: { id: user.id },
+          include: { roles: { include: { role: true } } }
+        });
+        const roles = dbUser?.roles.map((r: any) => r.role.name) || [];
+        
+        finalUser = { ...user, roles };
+      }
+
+      if (authConfig.callbacks?.jwt) {
+        return authConfig.callbacks.jwt({ ...params, user: finalUser });
+      }
+
+      return token;
+    }
+  }
 })

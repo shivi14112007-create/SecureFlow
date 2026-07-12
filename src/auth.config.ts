@@ -1,6 +1,5 @@
 import type { NextAuthConfig } from "next-auth";
 import GitHub from "next-auth/providers/github";
-import prisma from "@/lib/prisma";
 
 export default {
   providers: [
@@ -27,12 +26,6 @@ export default {
     async jwt({ token, account, user }: any) {
       // Initial sign in
       if (account && user) {
-        const dbUser = await prisma.user.findUnique({
-          where: { id: user.id },
-          include: { roles: { include: { role: true } } }
-        });
-        const roles = dbUser?.roles.map((r: any) => r.role.name) || [];
-
         return {
           ...token,
           accessToken: account.access_token,
@@ -40,7 +33,7 @@ export default {
           accessTokenExpires: account.expires_at ? account.expires_at * 1000 : 0,
           userId: user.id,
           codename: (user as any).codename,
-          roles,
+          roles: (user as any).roles || token.roles || [],
         };
       }
 
