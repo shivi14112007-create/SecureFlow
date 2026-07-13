@@ -1,5 +1,8 @@
 "use client";
 
+import { CyberTextReveal } from "@/components/cyber-text-reveal";
+import { CyberRainBackground } from "./cyber-rain-background";
+import { cn } from "@/lib/utils";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { CyberTextReveal } from "@/components/cyber-text-reveal";
@@ -162,12 +165,30 @@ export function HeistTransmission({
   const visibleCount = reducedMotion ? total : Math.min(revealedCount + 1, total);
 
   return (
-    <div className="min-h-screen bg-black flex flex-col">
-      <main className="flex-1 flex flex-col items-center justify-center p-4 sm:p-6">
+    <div className="min-h-screen bg-black flex flex-col relative">
+      {/* ── Atmospheric cyber-rain backdrop (fills the empty gutters) ────
+          Fixed, full-viewport, very low opacity, pointer-events: none.
+          Sits behind everything; the terminal card below lifts to z-10. */}
+      <CyberRainBackground opacity={0.13} />
+
+      {/* Vignette so the terminal card stays the visual focal point even
+          with rain behind it — darkens edges, keeps center readable. */}
+      <div
+        aria-hidden
+        className="pointer-events-none fixed inset-0 z-[1]"
+        style={{
+          background:
+            "radial-gradient(ellipse at center, rgba(0,0,0,0) 35%, rgba(0,0,0,0.75) 100%)",
+        }}
+      />
+
+      <main className="flex-1 flex flex-col items-center justify-center p-4 sm:p-6 relative z-10">
         <div
           className={cn(
             "w-full max-w-3xl rounded-md border border-red-900/60 shadow-2xl",
             "bg-[#050505] relative overflow-hidden",
+            // Soft red glow so the card separates from the rain backdrop.
+            "shadow-[0_0_60px_-15px_rgba(239,68,68,0.25)]",
           )}
         >
           {/* ── CRT scanline overlay (purely decorative) ─────────────────── */}
@@ -302,7 +323,7 @@ export function HeistTransmission({
         )}
       </main>
 
-      <footer className="py-4 text-center">
+      <footer className="py-4 text-center relative z-10">
         <p className="font-mono text-[10px] uppercase tracking-[0.3em] text-zinc-600 sm:text-xs">
           #BellaCiao · #JoinTheResistance
         </p>
