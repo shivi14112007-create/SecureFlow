@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createHmac, timingSafeEqual } from 'crypto';
-import { scanner, ScanFinding } from '@/lib/armor/scanner';
+import { scanner, ScanFinding, ScannerTimeoutError } from '@/lib/armor/scanner';
 import { iq } from '@/lib/armor/iq';
 import { developerReceivesAISecurityExplanations } from '@/ai/flows/developer-receives-ai-security-explanations';
 import { App, Octokit } from 'octokit';
@@ -392,7 +392,7 @@ const handler = withErrorHandler(async function POST(req: NextRequest) {
           }
         });
         
-        return NextResponse.json({ success: false, message: 'Rate limit exceeded, check run updated to failure' }, { status: 429 });
+        return NextResponse.json({ success: false, message: 'Rate limit exceeded, check run updated to failure' }, { status: 202 });
       }
       throw error;
     }
@@ -444,200 +444,196 @@ const handler = withErrorHandler(async function POST(req: NextRequest) {
       }
     }
 
-    // --- UPDATE: Pass the active policies to the scanner ---
-    let findings: ScanFinding[];
+    // --- UPDATE: Pass the active policies to the scanner with graceful AI fallbacks ---
     try {
-      findings = await scanner.scanPullRequest(fileChanges, activePolicies, customIgnores);
-    } catch (scanError: any) {
-      console.error('❌ SecureFlow Scan Failed:', scanError);
-      
-      // Update the pending comment to notify the user about the failure
-      await octokit.rest.issues.updateComment({
-        owner: repository?.owner?.login ?? '',
-        repo: repository?.name ?? '',
-        comment_id: pendingComment.data.id,
-        body: `### 🛡️ SecureFlow AI Security Report\n\n❌ **Scan Failed: Analysis Engine Unavailable**\n\nThe security scan failed because the AI analysis engine is currently unavailable (rate limits or repeated API errors). Please trigger the scan again by pushing a new commit or reopening this Pull Request.`,
-      });
+      const findings: ScanFinding[] = await scanner.scanPullRequest(fileChanges, activePolicies, customIgnores);
 
-      // Update the in-progress check run to failure
+      const enrichedFindings = await Promise.all(findings.map(async (finding: any) => {
+        const aiResponse = await developerReceivesAISecurityExplanations({
+          findingType: finding.type,
+          severity: finding.severity,
+          description: finding.description,
+          fileLocation: finding.fileLocation,
+          codeSnippet: finding.codeSnippet || ''
+        });
+        return {
+          ...finding,
+          explanation: aiResponse.explanation,
+          remediation: aiResponse.remediationSuggestions,
+          promptInjectionSuspected: aiResponse.promptInjectionSuspected
+        };
+      }));
+
+      const decision = iq.evaluateFindings(findings);
+      const conclusion = decision === 'PASS' ? 'success' : (decision === 'REVIEW REQUIRED' ? 'action_required' : 'failure');
+      
+      // --- EVENT 3: Policy Evaluation ---
+      await prisma.auditLog.create({
+        data: {
+          userId: userId,
+          action: 'Policy Evaluation',
+          resource: `${repository?.full_name ?? ''}#${pull_request?.number ?? 0}`,
+          decision: decision,
+          metadata: { findingsCount: findings.length }
+        }
+      });
+      // ----------------------------------
+
       await octokit.rest.checks.update({
         owner: repoOwner,
         repo: repoName,
         check_run_id: checkRunId!,
         status: 'completed',
-        conclusion: 'failure',
+        conclusion: conclusion,
         completed_at: new Date().toISOString(),
         output: {
-          title: 'Scan Failed: Analysis Engine Unavailable',
-          summary: `SecureFlow AI scan failed because the analysis engine is currently unavailable. Error details: ${scanError.message || String(scanError)}`,
+          title: `Policy Decision: ${decision}`,
+          summary: `SecureFlow detected ${findings.length} potential security issues.`,
         }
       });
 
-      // Create audit log for failed scan
+      if (enrichedFindings.length > 0) {
+        let commentBody = `### 🛡️ SecureFlow AI Security Report\n\n`;
+        if (warningMessage) commentBody += `${warningMessage}\n\n`;
+        commentBody += `⚠️ Detected **${enrichedFindings.length}** potential issues matching your code policies. Please review them before merging.\n\n`;
+
+        enrichedFindings.forEach((f: any) => {
+          // Determine color indicator badge based on severity
+          const badge = f.severity === 'CRITICAL' ? '🔴 CRITICAL' : (f.severity === 'HIGH' ? '🟠 HIGH' : '🟡 MEDIUM');
+          
+          commentBody += `#### ${badge} | **${f.type}** in \`${f.fileLocation}\`\n`;
+          if (f.promptInjectionSuspected) {
+            commentBody += `⚠️ **AI explanation may be unreliable for this finding — verify manually.** The scanned code may contain content crafted to influence the AI narrative below. The severity badge above comes from the static scanner and is unaffected.\n\n`;
+          }
+          commentBody += `> ${f.explanation}\n\n`;
+          
+          // Use collapsible HTML blocks so remediation details don't drown out the screen real estate
+          commentBody += `<details>\n<summary><b>🛠️ View Remediation Suggestions</b></summary>\n\n`;
+          commentBody += `${f.remediation}\n\n`;
+          commentBody += `</details>\n\n`;
+          commentBody += `---\n\n`;
+        });
+
+        // Update the comment we created earlier
+        await octokit.rest.issues.updateComment({
+          owner: repository?.owner?.login ?? '',
+          repo: repository?.name ?? '',
+          comment_id: pendingComment.data.id,
+          body: commentBody,
+        });
+
+        // --- EVENT 4: PR Comment Posted ---
+        await prisma.auditLog.create({
+          data: {
+            userId: userId,
+            action: 'PR Comment Posted',
+            resource: `${repository?.full_name ?? ''}#${pull_request?.number ?? 0}`,
+            metadata: { commentType: 'AI Security Report', findingsReported: enrichedFindings.length }
+          }
+        });
+      } else {
+        // If no findings, update the comment to show success!
+        await octokit.rest.issues.updateComment({
+          owner: repository?.owner?.login ?? '',
+          repo: repository?.name ?? '',
+          comment_id: pendingComment.data.id,
+          body: `### 🛡️ SecureFlow AI Security Report\n\n✅ Scan completed successfully. No vulnerabilities found in the **${fileChanges.length}** analyzed files.${warningMessage}`,
+        });
+      }
+
+      // Persist PR details to DB
+      if (dbRepo) {
+        const dbPr = await prisma.pullRequest.upsert({
+          where: { githubId: BigInt(pull_request?.id ?? 0) },
+          update: {
+            title: pull_request?.title ?? '',
+            state: pull_request?.state ?? '', 
+            status: decision,
+            authorLogin: pull_request?.user?.login ?? null,
+            authorAvatarUrl: pull_request?.user?.avatar_url ?? null,
+          },
+          create: {
+            githubId: BigInt(pull_request?.id ?? 0),
+            prNumber: pull_request?.number ?? 0,
+            title: pull_request?.title ?? '',
+            state: pull_request?.state ?? '',
+            status: decision,
+            repositoryId: dbRepo.id,
+            authorLogin: pull_request?.user?.login ?? null,
+            authorAvatarUrl: pull_request?.user?.avatar_url ?? null,
+          }
+        });
+
+        // Update WebhookEvent to link it to the newly created/upserted PullRequest
+        if (deliveryId) {
+          await prisma.webhookEvent.update({
+            where: { deliveryId },
+            data: {
+              repositoryId: dbRepo.id,
+              pullRequestId: dbPr.id,
+            }
+          });
+        }
+
+        const severityScores: Record<string, number> = { CRITICAL: 10, HIGH: 5, MEDIUM: 3, LOW: 1 };
+        const riskScore = findings.reduce((score: number, f: any) => score + (severityScores[f.severity.toUpperCase()] || 0), 0);
+
+        await prisma.scanResult.create({
+          data: {
+            pullRequestId: dbPr.id,
+            riskScore,
+            policyDecision: decision,
+            findings: {
+              create: enrichedFindings.map((f: any) => ({
+                type: f.type,
+                severity: f.severity,
+                fileLocation: f.fileLocation,
+                codeSnippet: f.codeSnippet || null,
+                explanation: f.explanation || null,
+                remediation: f.remediation || null,
+                promptInjectionSuspected: f.promptInjectionSuspected || false
+              }))
+            }
+          }
+        });
+      }
+
+      return NextResponse.json({ success: true, decision, findingCount: findings.length });
+    } catch (err: any) {
+      console.error('Scan failed or timed out:', err);
+
+      await octokit.rest.checks.update({
+        owner: repoOwner,
+        repo: repoName,
+        check_run_id: checkRunId!,
+        status: 'completed',
+        conclusion: 'neutral',
+        completed_at: new Date().toISOString(),
+        output: {
+          title: `Scan Error`,
+          summary: `The automated security scan could not be completed.`,
+        }
+      });
+
       await prisma.auditLog.create({
         data: {
           userId: userId,
           action: 'Scan Failed',
           resource: `${repository?.full_name ?? ''}#${pull_request?.number ?? 0}`,
-          metadata: { error: scanError.message || String(scanError) }
+          decision: 'FAIL',
+          metadata: { error: err.message || String(err), status: 'TIMEOUT_OR_FAILURE' }
         }
       });
 
-      return NextResponse.json({ success: false, error: 'Scan Failed: Analysis Engine Unavailable' }, { status: 502 });
-    }
-    // -------------------------------------------------------
-    
-    const enrichedFindings = await Promise.all(findings.map(async (finding: any) => {
-      const aiResponse = await developerReceivesAISecurityExplanations({
-        findingType: finding.type,
-        severity: finding.severity,
-        description: finding.description,
-        fileLocation: finding.fileLocation,
-        codeSnippet: finding.codeSnippet || ''
+      await octokit.rest.issues.updateComment({
+        owner: repository?.owner?.login ?? '',
+        repo: repository?.name ?? '',
+        comment_id: pendingComment.data.id,
+        body: `### 🛡️ SecureFlow AI Security Report\n\n⚠️ **Scan Failed:** The automated security scan could not be completed due to an AI timeout or API error. The PR is unblocked, but manual review is advised.\n\n_Error details: ${err.message || String(err)}_`,
       });
-      return {
-        ...finding,
-        explanation: aiResponse.explanation,
-        remediation: aiResponse.remediationSuggestions,
-        promptInjectionSuspected: aiResponse.promptInjectionSuspected
-      };
-    }));
 
-    const decision = iq.evaluateFindings(findings);
-    const conclusion = decision === 'PASS' ? 'success' : (decision === 'REVIEW REQUIRED' ? 'action_required' : 'failure');
-    
-    // --- EVENT 3: Policy Evaluation ---
-    await prisma.auditLog.create({
-      data: {
-        userId: userId,
-        action: 'Policy Evaluation',
-        resource: `${repository?.full_name ?? ''}#${pull_request?.number ?? 0}`,
-        decision: decision,
-        metadata: { findingsCount: findings.length }
-      }
-    });
-    // ----------------------------------
-
-    await octokit.rest.checks.update({
-      owner: repoOwner,
-      repo: repoName,
-      check_run_id: checkRunId!,
-      status: 'completed',
-      conclusion: conclusion,
-      completed_at: new Date().toISOString(),
-      output: {
-        title: `Policy Decision: ${decision}`,
-        summary: `SecureFlow detected ${findings.length} potential security issues.`,
-      }
-    });
-
-   if (enrichedFindings.length > 0) {
-     let commentBody = `### 🛡️ SecureFlow AI Security Report\n\n`;
-     if (warningMessage) commentBody += `${warningMessage}\n\n`;
-     commentBody += `⚠️ Detected **${enrichedFindings.length}** potential issues matching your code policies. Please review them before merging.\n\n`;
-
-     enrichedFindings.forEach((f: any) => {
-       // Determine color indicator badge based on severity
-       const badge = f.severity === 'CRITICAL' ? '🔴 CRITICAL' : (f.severity === 'HIGH' ? '🟠 HIGH' : '🟡 MEDIUM');
-       
-       commentBody += `#### ${badge} | **${f.type}** in \`${f.fileLocation}\`\n`;
-       if (f.promptInjectionSuspected) {
-         commentBody += `⚠️ **AI explanation may be unreliable for this finding — verify manually.** The scanned code may contain content crafted to influence the AI narrative below. The severity badge above comes from the static scanner and is unaffected.\n\n`;
-       }
-       commentBody += `> ${f.explanation}\n\n`;
-       
-       // Use collapsible HTML blocks so remediation details don't drown out the screen real estate
-       commentBody += `<details>\n<summary><b>🛠️ View Remediation Suggestions</b></summary>\n\n`;
-       commentBody += `${f.remediation}\n\n`;
-       commentBody += `</details>\n\n`;
-       commentBody += `---\n\n`;
-     });
-
-     // Update the comment we created earlier
-     await octokit.rest.issues.updateComment({
-       owner: repository?.owner?.login ?? '',
-       repo: repository?.name ?? '',
-       comment_id: pendingComment.data.id,
-       body: commentBody,
-     });
-
-     // --- EVENT 4: PR Comment Posted ---
-     await prisma.auditLog.create({
-       data: {
-         userId: userId,
-         action: 'PR Comment Posted',
-         resource: `${repository?.full_name ?? ''}#${pull_request?.number ?? 0}`,
-         metadata: { commentType: 'AI Security Report', findingsReported: enrichedFindings.length }
-       }
-     });
-   } else {
-     // If no findings, update the comment to show success!
-     await octokit.rest.issues.updateComment({
-       owner: repository?.owner?.login ?? '',
-       repo: repository?.name ?? '',
-       comment_id: pendingComment.data.id,
-       body: `### 🛡️ SecureFlow AI Security Report\n\n✅ Scan completed successfully. No vulnerabilities found in the **${fileChanges.length}** analyzed files.${warningMessage}`,
-     });
-   }
-
-   // Persist PR details to DB
-   if (dbRepo) {
-     const dbPr = await prisma.pullRequest.upsert({
-       where: { githubId: BigInt(pull_request?.id ?? 0) },
-       update: {
-         title: pull_request?.title ?? '',
-         state: pull_request?.state ?? '', 
-         status: decision,
-         authorLogin: pull_request?.user?.login ?? null,
-         authorAvatarUrl: pull_request?.user?.avatar_url ?? null,
-       },
-       create: {
-         githubId: BigInt(pull_request?.id ?? 0),
-         prNumber: pull_request?.number ?? 0,
-         title: pull_request?.title ?? '',
-         state: pull_request?.state ?? '',
-         status: decision,
-         repositoryId: dbRepo.id,
-         authorLogin: pull_request?.user?.login ?? null,
-         authorAvatarUrl: pull_request?.user?.avatar_url ?? null,
-       }
-     });
-
-     // Update WebhookEvent to link it to the newly created/upserted PullRequest
-     if (deliveryId) {
-       await prisma.webhookEvent.update({
-         where: { deliveryId },
-         data: {
-           repositoryId: dbRepo.id,
-           pullRequestId: dbPr.id,
-         }
-       });
-     }
-
-     const severityScores: Record<string, number> = { CRITICAL: 10, HIGH: 5, MEDIUM: 3, LOW: 1 };
-     const riskScore = findings.reduce((score: number, f: any) => score + (severityScores[f.severity.toUpperCase()] || 0), 0);
-
-     await prisma.scanResult.create({
-       data: {
-         pullRequestId: dbPr.id,
-         riskScore,
-         policyDecision: decision,
-         findings: {
-           create: enrichedFindings.map((f: any) => ({
-             type: f.type,
-             severity: f.severity,
-             fileLocation: f.fileLocation,
-             codeSnippet: f.codeSnippet || null,
-             explanation: f.explanation || null,
-             remediation: f.remediation || null,
-             promptInjectionSuspected: f.promptInjectionSuspected || false
-           }))
-         }
-       }
-     });
-   }
-
-   return NextResponse.json({ success: true, decision, findingCount: findings.length });
+      return NextResponse.json({ success: false, error: err.message || String(err), fallback: true });
+    }
   }
 
   return NextResponse.json({ message: 'Event successfully caught but ignored' }, { status: 200 });

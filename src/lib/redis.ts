@@ -4,19 +4,19 @@ const globalForRedis = globalThis as unknown as {
   redis: Redis | undefined;
 };
 
-// Use an in-memory fallback if UPSTASH_REDIS_REST_URL is not provided (useful for local dev without Docker)
+// Use an in-memory fallback if REDIS_URL is not provided (useful for local dev without Docker)
 let redisInstance: Redis | null = null;
 
-if (process.env.UPSTASH_REDIS_REST_URL) {
+if (process.env.REDIS_URL) {
   redisInstance =
     globalForRedis.redis ??
-    new Redis(process.env.UPSTASH_REDIS_REST_URL, {
+    new Redis(process.env.REDIS_URL, {
       maxRetriesPerRequest: 3,
     });
     
   if (process.env.NODE_ENV !== 'production') globalForRedis.redis = redisInstance;
 } else {
-  console.warn('⚠️ UPSTASH_REDIS_REST_URL is not set. Rate limiting will fall back to an in-memory Map (not suitable for production multi-instance).');
+  console.warn('⚠️ REDIS_URL is not set. Rate limiting will fall back to an in-memory Map (not suitable for production multi-instance).');
 }
 
 export const redis = redisInstance;

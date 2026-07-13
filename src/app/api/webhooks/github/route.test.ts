@@ -2,6 +2,38 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { POST } from './route';
 import prisma from '@/lib/prisma';
 
+const { mockChecksCreate, mockChecksUpdate, mockPaginate } = vi.hoisted(() => {
+  return {
+    mockChecksCreate: vi.fn().mockResolvedValue({ data: { id: 789 } }),
+    mockChecksUpdate: vi.fn().mockResolvedValue({}),
+    mockPaginate: vi.fn(),
+  };
+});
+
+vi.mock('octokit', () => {
+  return {
+    Octokit: {
+      plugin: vi.fn().mockReturnValue({
+        defaults: vi.fn().mockReturnValue(vi.fn()),
+      }),
+    },
+    App: class {
+      getInstallationOctokit = vi.fn().mockResolvedValue({
+        rest: {
+          checks: {
+            create: mockChecksCreate,
+            update: mockChecksUpdate,
+          },
+          pulls: {
+            listFiles: {},
+          },
+        },
+        paginate: mockPaginate,
+      });
+    },
+  };
+});
+
 vi.mock('crypto', () => {
   return {
     createHmac: () => ({
@@ -64,9 +96,21 @@ vi.mock('@/lib/prisma', () => {
       webhookEvent: {
         findUnique: vi.fn(),
         create: vi.fn(),
+        update: vi.fn(),
       },
       repository: {
         upsert: vi.fn(),
+        findUnique: vi.fn(),
+      },
+      pullRequest: {
+        findUnique: vi.fn(),
+        upsert: vi.fn(),
+      },
+      policyTemplate: {
+        findMany: vi.fn(),
+      },
+      userPolicyToggle: {
+        findMany: vi.fn(),
       },
       auditLog: {
         create: vi.fn(),
@@ -87,6 +131,8 @@ describe('GitHub Webhooks - App Installation Chunking', () => {
     process.env = {
       ...originalEnv,
       GITHUB_WEBHOOK_SECRET: 'test-secret',
+      GITHUB_APP_ID: '123456',
+      GITHUB_PRIVATE_KEY: 'test-private-key',
     };
   });
 
@@ -208,5 +254,79 @@ describe('GitHub Webhooks - App Installation Chunking', () => {
         metadata: { count: 65, event: 'installation_repositories' },
       },
     });
+  });
+
+  it('handles GitHub API rate limiting gracefully and returns 202', async () => {
+    const mockRepo = {
+      id: 999,
+      full_name: 'org/repo',
+      name: 'repo',
+      owner: { login: 'org' },
+    };
+
+    const mockPR = {
+      id: 888,
+      number: 42,
+      head: { sha: 'abcdef' },
+      user: { login: 'user-dev' },
+    };
+
+    // Mock prisma responses
+    vi.mocked(prisma.webhookEvent.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.repository.findUnique).mockResolvedValue({
+      id: 'repo-db-id',
+      userId: 'user-123',
+    } as any);
+    vi.mocked(prisma.pullRequest.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.policyTemplate.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.userPolicyToggle.findMany).mockResolvedValue([]);
+
+    // Mock paginate to throw rate limit error
+    const rateLimitError = new Error('Rate limit exceeded');
+    (rateLimitError as any).status = 429;
+    mockPaginate.mockRejectedValueOnce(rateLimitError);
+
+    const req = new NextRequest('http://localhost/api/webhooks/github', {
+      method: 'POST',
+      headers: {
+        'x-github-event': 'pull_request',
+        'x-github-delivery': 'delivery-789',
+        'x-hub-signature-256': 'sha256=mock-signature',
+      },
+      body: JSON.stringify({
+        action: 'opened',
+        installation: { id: 12345 },
+        repository: mockRepo,
+        pull_request: mockPR,
+      }),
+    });
+
+    const response = await POST(req as any);
+
+    // Check response status and body
+    expect(response.status).toBe(202);
+    expect(response.body).toEqual({
+      success: false,
+      message: 'Rate limit exceeded, check run updated to failure',
+    });
+
+    // Check checks.create and checks.update were called
+    expect(mockChecksCreate).toHaveBeenCalledWith(expect.objectContaining({
+      owner: 'org',
+      repo: 'repo',
+      name: 'SecureFlow Scan',
+      status: 'in_progress',
+    }));
+
+    expect(mockChecksUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      owner: 'org',
+      repo: 'repo',
+      check_run_id: 789,
+      status: 'completed',
+      conclusion: 'failure',
+      output: expect.objectContaining({
+        title: 'Scan Failed: API Rate Limit',
+      }),
+    }));
   });
 });

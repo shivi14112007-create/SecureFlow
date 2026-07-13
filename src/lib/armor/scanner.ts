@@ -16,6 +16,13 @@ export interface FileChange {
   patch: string;
 }
 
+export class ScannerTimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ScannerTimeoutError';
+  }
+}
+
 // Redact high-entropy strings and known secret formats
 export function maskSecrets(text: string): string {
   if (!text) return text;
@@ -426,7 +433,10 @@ Format:
         try {
           console.log(`🔍 Triggering consolidated security scan for files: [${batchFiles.join(', ')}]...`);
           
-          const chatCompletion = await groq.chat.completions.create({
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 60000);
+
+          const chatCompletionPromise = groq.chat.completions.create({
             messages: [
               {
                 role: 'system',
@@ -446,6 +456,16 @@ CRITICAL RULES:
             response_format: { type: 'json_object' },
           }, { timeout: SCAN_REQUEST_TIMEOUT_MS });
 
+          // Fallback race in case the SDK doesn't fully respect the abort signal
+          const timeoutPromise = new Promise<never>((_, reject) => {
+            setTimeout(() => reject(new ScannerTimeoutError('LLM scan timed out after 60 seconds')), 60000);
+          });
+
+          const chatCompletion = await Promise.race([
+            chatCompletionPromise.finally(() => clearTimeout(timeoutId)),
+            timeoutPromise
+          ]);
+          
           const responseText = chatCompletion.choices[0]?.message?.content || '{"findings": []}';
           const result = JSON.parse(responseText);
           
@@ -484,6 +504,9 @@ CRITICAL RULES:
           success = true;
         } catch (error: any) {
           lastError = error;
+          if (error instanceof ScannerTimeoutError || error.name === 'AbortError') {
+            throw new ScannerTimeoutError('LLM scan timed out after 60 seconds');
+          }
           if (error.status === 429) {
             const retryAfterHeader = error.headers?.get?.('retry-after') || error.headers?.['retry-after'];
             const requestedWait = retryAfterHeader ? parseInt(retryAfterHeader, 10) * 1000 : (4 - retries) * 25000;
@@ -510,13 +533,13 @@ CRITICAL RULES:
             }
           } else {
             console.error(`❌ Consolidated scan failed completely:`, error);
-            break;
+            throw error;
           }
         }
       }
 
       if (!success) {
-        throw new Error(`ScanFailedAnalysisEngineUnavailable: LLM scan failed after all retries. Last error: ${lastError?.message || lastError || 'Unknown error'}`);
+        throw lastError || new Error(`ScanFailedAnalysisEngineUnavailable: LLM scan failed after all retries. Last error: ${lastError?.message || lastError || 'Unknown error'}`);
       }
 
       return findings;

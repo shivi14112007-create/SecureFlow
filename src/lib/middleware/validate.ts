@@ -18,7 +18,7 @@ export function withValidation<T>(
           {
             error: 'Bad Request',
             message: 'Invalid request payload',
-            details: result.error.errors,
+            details: result.error.issues,
           },
           { status: 400 }
         );

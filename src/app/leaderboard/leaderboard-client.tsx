@@ -23,6 +23,7 @@ function useCountUp(target: number, active: boolean) {
   const raf = useRef<number | null>(null);
   useEffect(() => {
     if (!active) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setValue(target);
       return;
     }
