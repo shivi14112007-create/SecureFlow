@@ -113,7 +113,6 @@ export function CyberRainBackground({ opacity = 0.12 }: CyberRainBackgroundProps
     }
 
     function makeColumn(x: number, height: number, isWord: boolean): Column {
-      const fontSize = configRef.current.fontSize;
       return {
         x,
         y: Math.random() * -height,
