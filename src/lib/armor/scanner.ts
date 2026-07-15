@@ -94,7 +94,7 @@ const IGNORED_PATHS = [
   'dist/', 'build/', '.next/', 'node_modules/', 'prisma/migrations/'
 ];
 
-function compileIgnorePatterns(patterns: string[]): RegExp[] {
+export function compileIgnorePatterns(patterns: string[]): RegExp[] {
   return patterns
     .map(p => p.trim())
     .filter(p => p.length > 0 && !p.startsWith('#'))
@@ -133,7 +133,7 @@ function compileIgnorePatterns(patterns: string[]): RegExp[] {
     });
 }
 
-function shouldIgnore(filename: string, customIgnores: RegExp[] = []): boolean {
+export function shouldIgnore(filename: string, customIgnores: RegExp[] = []): boolean {
   const lower = filename.toLowerCase();
   
   // 1. Path-level exclusions
@@ -192,7 +192,7 @@ function decodeOneLayer(input: string): string {
   return out;
 }
 
-function sanitizeRecursively(input: string): string {
+export function sanitizeRecursively(input: string): string {
   let current = input;
 
   for (let i = 0; i < MAX_SANITIZE_ITERATIONS; i++) {
@@ -240,7 +240,7 @@ export function extractAddedLines(patch: string): string {
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-function filterFalsePositives(findings: ScanFinding[]): ScanFinding[] {
+export function filterFalsePositives(findings: ScanFinding[]): ScanFinding[] {
   const safePlaceholders = [
     'your_', 'actual_', 'secret_here', 'placeholder', 
     'user:password', 'auth_secret', 'localhost', '127.0.0.1',
