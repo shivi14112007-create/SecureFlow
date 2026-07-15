@@ -56,11 +56,11 @@ export function useScrambleText({
   const startTimeRef = useRef<number | null>(null);
   // Skip animation on initial mount so the codename renders immediately.
   const isFirstRender = useRef(true);
-  // Keep the latest onComplete in a ref so the animation effect below does
-  // not re-run (and restart the decode) whenever the caller passes a new
-  // inline closure on each render.
   const onCompleteRef = useRef<(() => void) | undefined>(onComplete);
-  onCompleteRef.current = onComplete;
+
+  useEffect(() => {
+    onCompleteRef.current = onComplete;
+  }, [onComplete]);
 
   useEffect(() => {
     if (isFirstRender.current) {

@@ -1,5 +1,6 @@
 import Groq from 'groq-sdk';
-import prisma from '../prisma';
+import fs from 'fs';
+import path from 'path';
 
 export type ScanFinding = {
   type: string;
@@ -346,8 +347,6 @@ export class ArmorIQScanner {
 
     if (combinedIgnores.length === 0 && combinedPlaceholders.length === 0) {
       try {
-        const fs = require('fs');
-        const path = require('path');
         const ignorePath = path.join(process.cwd(), '.secureflowignore');
         if (fs.existsSync(ignorePath)) {
           const content = fs.readFileSync(ignorePath, 'utf8');

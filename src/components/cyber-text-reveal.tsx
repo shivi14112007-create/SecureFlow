@@ -128,6 +128,7 @@ export function CyberTextReveal({
   useEffect(() => {
     if (!isTransmission) return;
     completedRef.current = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsRevealing(false);
 
     timerRef.current = setTimeout(() => {

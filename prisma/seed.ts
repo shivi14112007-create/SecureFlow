@@ -107,15 +107,7 @@ async function main() {
         rules: { conditions: ["web3/solidity/reentrancy_pattern", "web3/external_call_before_state_change"] }
       },
 
-      // --- 7. Secrets & Credential Management ---
-      {
-        name: "Detect Hardcoded Secrets and API Keys",
-        description: "Blocks commits and code changes that embed API keys, access tokens, or credentials directly in source rather than pulling them from a secrets manager or environment variable.",
-        severity: "CRITICAL",
-        action: "DENY",
-        isDefault: false,
-        rules: { conditions: ["code/secrets/hardcoded_api_key", "code/secrets/hardcoded_credential", "vcs/commit/contains_secret"] }
-      },
+      // --- 7. Credential Management ---
       {
         name: "Flag Long-Lived or Non-Expiring Access Tokens",
         description: "Flags API tokens, session keys, or service credentials issued without an expiry, or with an unusually long lifetime, increasing the blast radius of a leak.",
