@@ -11,7 +11,6 @@ interface TerminalStep {
 }
 
 const TERMINAL_STEPS: TerminalStep[] = [
-  { text: "sf-cli scan --pr 452 --repo bank-api", type: "command", delay: 1000 },
   { text: "⚙️ Initializing SecureFlow static analysis engines...", type: "info", delay: 800 },
   { text: "🔍 Scanning 14 files in commit diff [a9f82d]...", type: "info", delay: 1200 },
   { text: "⚠️ Found potential matching pattern in config/production.json", type: "warning", delay: 800 },
@@ -21,7 +20,6 @@ const TERMINAL_STEPS: TerminalStep[] = [
   { text: "🤖 [The Professor] Plan of Action:", type: "ai", delay: 500 },
   { text: "   1. Immediately rotate exposed Stripe credential (sk_live_***).", type: "ai", delay: 600 },
   { text: "   2. Move environment configs to Encrypted Secrets Vault.", type: "ai", delay: 600 },
-  { text: "   3. Run 'sf-cli purge' to scrub Git history of the leak.", type: "ai", delay: 1000 },
   { text: "🔄 Awaiting security resolution to clear gates...", type: "info", delay: 2000 },
 ];
 
