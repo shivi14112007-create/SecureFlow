@@ -30,6 +30,53 @@ export async function getQueueMetrics(): Promise<{
   };
 }
 
+export type QueueJobState = "waiting" | "active" | "completed" | "delayed";
+
+export async function getQueueJobs(state: QueueJobState, limit = 200) {
+  const session = await auth();
+  const roles = (session?.user as any)?.roles || [];
+
+  if (!roles.includes("ADMIN")) {
+    throw new Error("Unauthorized");
+  }
+
+  const jobs = await webhookQueue.getJobs([state], 0, Math.max(limit - 1, 0));
+  return jobs.map((job) => ({
+    id: job.id!,
+    name: job.name,
+    data: job.data,
+    timestamp: job.timestamp,
+    processedOn: job.processedOn ?? null,
+    finishedOn: job.finishedOn ?? null,
+    progress: job.progress ?? null,
+    attemptsMade: job.attemptsMade ?? 0,
+    failedReason: (job as any).failedReason ?? null,
+  }));
+}
+
+export async function removeQueueJob(jobId: string, state: QueueJobState) {
+  const session = await auth();
+  const roles = (session?.user as any)?.roles || [];
+
+  if (!roles.includes("ADMIN")) {
+    throw new Error("Unauthorized");
+  }
+
+  if (state === "active") {
+    throw new Error("Cannot remove a job that is currently being processed");
+  }
+
+  const job = await webhookQueue.getJob(jobId);
+  if (!job) {
+    throw new Error("Job not found");
+  }
+
+  await job.remove();
+
+  revalidatePath("/admin/queue");
+  return { success: true };
+}
+
 export async function getDLQJobs() {
   const session = await auth();
   const roles = (session?.user as any)?.roles || [];
