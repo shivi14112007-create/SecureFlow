@@ -67,13 +67,13 @@ export async function getUsers(): Promise<AdminUserRow[]> {
     orderBy: { createdAt: "desc" },
   });
 
-  return users.map((u) => ({
+  return users.map((u: any) => ({
     id: u.id,
     name: u.name,
     email: u.email,
     codename: u.codename,
     image: u.image,
-    roles: u.roles.map((r) => r.role.name),
+    roles: u.roles.map((r: any) => r.role.name),
     repoCount: u._count.repositories,
     createdAt: u.createdAt,
   }));
@@ -128,7 +128,7 @@ export async function updateUserRole(userId: string, newRole: RoleName) {
     throw new Error("User not found.");
   }
 
-  const oldRoles = target.roles.map((r) => r.role.name);
+  const oldRoles = target.roles.map((r: any) => r.role.name);
 
   if (oldRoles.length === 1 && oldRoles[0] === newRole) {
     return { success: true, unchanged: true };
@@ -197,7 +197,7 @@ export async function deleteUser(userId: string) {
     throw new Error("User not found.");
   }
 
-  if (target.roles.some((r) => r.role.name === "ADMIN")) {
+  if (target.roles.some((r: any) => r.role.name === "ADMIN")) {
     const adminCount = await prisma.user.count({
       where: { roles: { some: { role: { name: "ADMIN" } } } },
     });
@@ -297,10 +297,10 @@ export async function getAuditLogs(query: AuditLogQuery = {}): Promise<AuditLogR
     }),
   ]);
 
-  const userMap = new Map(users.map((u) => [u.id, u]));
+  const userMap = new Map(users.map((u: any) => [u.id, u]));
 
   return {
-    logs: logs.map((l) => ({
+    logs: logs.map((l: any) => ({
       ...l,
       actor: l.userId ? (userMap.get(l.userId) as AuditLogActor) ?? null : null,
     })),
@@ -336,7 +336,7 @@ export async function getAuditLogMetrics(): Promise<AuditLogMetrics> {
   return {
     total,
     last24h,
-    topActions: grouped.map((g) => ({ action: g.action, count: g._count })),
+    topActions: grouped.map((g: any) => ({ action: g.action, count: g._count })),
   };
 }
 
@@ -349,5 +349,5 @@ export async function getAuditLogFilters(): Promise<{ actions: string[] }> {
     orderBy: { action: "asc" },
   });
 
-  return { actions: rows.map((r) => r.action) };
+  return { actions: rows.map((r: any) => r.action) };
 }
